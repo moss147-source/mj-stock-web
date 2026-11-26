@@ -1,4 +1,4 @@
-import os
+app_py = """import os
 import io
 import csv
 import json
@@ -25,7 +25,7 @@ REVIEWS = [
     {"user": "สมชาย", "stars": 5, "comment": "ใช้งานง่าย สแกนสินค้าแล้วข้อมูลขึ้นครบถ้วน"}
 ]
 
-BASE_TEMPLATE = """<!DOCTYPE html>
+BASE_TEMPLATE = \"\"\"<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
@@ -79,10 +79,10 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 
   <footer>ซอฟต์แวร์ โดย เอ็มเจ</footer>
 </body>
-</html>"""
+</html>\"\"\"
 
 
-SCANNER_BLOCK = """
+SCANNER_BLOCK = \"\"\"
 <div style="border:1px solid #d9e0e8; border-radius:8px; padding:14px; margin-bottom:14px; background:#f8fafc;">
   <div>สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติด้วยกล้องและแฟลช</div>
   <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
@@ -181,7 +181,7 @@ SCANNER_BLOCK = """
     document.getElementById('cameraStatus').textContent = 'ปิดกล้องแล้ว';
   }
 </script>
-"""
+\"\"\"
 
 
 def render_page(body_html):
@@ -193,3 +193,538 @@ def is_admin_user(username):
 
 
 def can_access_audit(audit_item, current_user):
+    if is_admin_user(current_user):
+        return True
+    return audit_item.get("user") == current_user
+
+
+def _escape_pdf_text(text):
+    return text.replace("\\\\", "\\\\\\\\").replace("(", "\\\\(").replace(")", "\\\\)")
+
+
+def build_simple_pdf_bytes(lines):
+    escaped_lines = [_escape_pdf_text(str(line)) for line in lines]
+    stream_cmds = ["BT", "/F1 11 Tf", "50 750 Td", "16 TL"]
+    for idx, line in enumerate(escaped_lines[:42]):
+        if idx == 0:
+            stream_cmds.append(f"({line}) Tj")
+        else:
+            stream_cmds.append(f"T* ({line}) Tj")
+    stream_cmds.append("ET")
+    stream_data = "\\n".join(stream_cmds).encode("latin-1", errors="replace")
+
+    objs = []
+    objs.append(b"1 0 obj\\n<< /Type /Catalog /Pages 2 0 R >>\\nendobj\\n")
+    objs.append(b"2 0 obj\\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\\nendobj\\n")
+    objs.append(
+        b"3 0 obj\\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\\nendobj\\n"
+    )
+    objs.append(b"4 0 obj\\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\\nendobj\\n")
+    objs.append(
+        f"5 0 obj\\n<< /Length {len(stream_data)} >>\\nstream\\n".encode("ascii")
+        + stream_data
+        + b"\\nendstream\\nendobj\\n"
+    )
+
+    pdf = bytearray(b"%PDF-1.4\\n")
+    offsets = [0]
+    for obj in objs:
+        offsets.append(len(pdf))
+        pdf.extend(obj)
+
+    xref_pos = len(pdf)
+    pdf.extend(f"xref\\n0 {len(offsets)}\\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \\n")
+    for off in offsets[1:]:
+        pdf.extend(f"{off:010d} 00000 n \\n".encode("ascii"))
+    pdf.extend(
+        f"trailer\\n<< /Size {len(offsets)} /Root 1 0 R >>\\nstartxref\\n{xref_pos}\\n%%EOF\\n".encode("ascii")
+    )
+    return bytes(pdf)
+
+
+def build_word_docx_bytes(lines):
+    def xml_esc(s):
+        return (
+            str(s)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+        )
+
+    paragraphs = "".join(
+        [f"<w:p><w:r><w:t xml:space=\\"preserve\\">{xml_esc(line)}</w:t></w:r></w:p>" for line in lines]
+    )
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{paragraphs}</w:body></w:document>"
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        "</Types>"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        "</Relationships>"
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", document_xml)
+    buf.seek(0)
+    return buf.read()
+
+
+def build_excel_csv_bytes():
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Watermark", "ระบบนับสต็อก พัฒนาโดย เอ็มเจ"])
+    writer.writerow(["Code", "Name", "Price", "Qty", "Unit", "Detail"])
+    for p in PRODUCTS.values():
+        writer.writerow([p["code"], p["name"], p["price"], p["qty"], p["unit"], p["detail"]])
+    writer.writerow([])
+    writer.writerow(["Time", "User", "Recorder", "Code", "Name", "Price", "Qty", "Unit"])
+    for r in STOCK_LOGS:
+        writer.writerow([r["time"], r["user"], r["recorder"], r["code"], r["name"], r["price"], r["qty"], r["unit"]])
+    return ("\\ufeff" + buf.getvalue()).encode("utf-8")
+
+
+def generate_export_file(export_type, current_user, ts):
+    lines = [
+        "MJ Stock Report - ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
+        f"Exported By: {current_user}",
+        f"Export Type: {export_type}",
+        f"Timestamp: {ts}",
+        "--- Products ---"
+    ]
+    for p in PRODUCTS.values():
+        lines.append(f"{p['code']} | {p['name']} | Price: {p['price']} | Qty: {p['qty']} {p['unit']} | {p['detail']}")
+    lines.append("--- Stock Counting Logs ---")
+    for r in STOCK_LOGS:
+        lines.append(f"{r['time']} | {r['user']} | {r['recorder']} | {r['code']} | {r['name']} | {r['price']} | {r['qty']} {r['unit']}")
+
+    if export_type == "PDF":
+        filename = f"report_{current_user}_{ts}.pdf"
+        content = build_simple_pdf_bytes(lines)
+        mimetype = "application/pdf"
+    elif export_type == "Word":
+        filename = f"report_{current_user}_{ts}.docx"
+        content = build_word_docx_bytes(lines)
+        mimetype = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    else:
+        filename = f"report_{current_user}_{ts}.csv"
+        content = build_excel_csv_bytes()
+        mimetype = "text/csv; charset=utf-8"
+
+    full_path = os.path.join(BACKUP_DIR, filename)
+    with open(full_path, "wb") as f:
+        f.write(content)
+    return filename, full_path, mimetype
+
+
+@app.route("/", methods=["GET", "POST"])
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    error = ""
+    info = ""
+    if request.method == "POST":
+        action = request.form.get("action", "login")
+        username = (request.form.get("username") or "").strip() or "ผู้ใช้งาน"
+        recorder = (request.form.get("recorder") or "").strip() or username
+        consent = request.form.get("consent")
+
+        if not consent:
+            error = "กรุณาติ๊กเลือกให้ความยินยอมผู้ใช้ก่อนเข้าใช้งานระบบ"
+        elif action == "google":
+            session["logged_in"] = True
+            session["username"] = "บัญชีผู้ใช้กูเกิล"
+            session["recorder"] = recorder
+            return redirect(url_for("stock"))
+        elif action == "register":
+            info = "สร้างบัญชีใหม่เรียบร้อยแล้ว กรุณากดปุ่มเข้าสู่ระบบ"
+        elif action == "forgot":
+            info = "ส่งลิงก์รีเซ็ตรหัสผ่านเรียบร้อยแล้ว"
+        else:
+            session["logged_in"] = True
+            session["username"] = username
+            session["recorder"] = recorder
+            return redirect(url_for("stock"))
+
+    html = f\"\"\"
+    <section class="card">
+      <h2>เข้าสู่ระบบ</h2>
+      <form method="post">
+        <label>ชื่อผู้ใช้งาน</label>
+        <input name="username" type="text" placeholder="ไม่บังคับกรอก" />
+        <label>ชื่อผู้บันทึกหรือผู้นับสต็อก</label>
+        <input name="recorder" type="text" placeholder="ไม่บังคับกรอก" />
+        <label>รหัสผ่าน</label>
+        <input name="password" type="password" placeholder="ไม่บังคับกรอก" />
+        <label>
+          <input name="consent" type="checkbox" style="width:auto; margin-right:8px;" />
+          ฉันยอมรับเงื่อนไขและให้ความยินยอมในการเข้าถึงข้อมูลเพื่อใช้งานระบบ
+        </label>
+        <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
+          <button type="submit" name="action" value="login">เข้าสู่ระบบ</button>
+          <button type="submit" name="action" value="register" class="secondary">สร้างบัญชี</button>
+          <button type="submit" name="action" value="forgot" class="secondary">ลืมรหัสผ่าน</button>
+          <button type="submit" name="action" value="google" class="secondary">สร้างบัญชีด้วยกูเกิล</button>
+        </div>
+      </form>
+      <p class="msg-err">{error}</p>
+      <p class="msg-ok">{info}</p>
+    </section>
+    \"\"\"
+    return render_page(html)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/api/product/<code>")
+def get_product(code):
+    item = PRODUCTS.get(code)
+    if not item:
+        return jsonify({"found": False}), 404
+    return jsonify({"found": True, "product": item})
+
+
+@app.route("/stock", methods=["GET", "POST"])
+def stock():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    status_msg = ""
+    if request.method == "POST":
+        code = (request.form.get("code") or "").strip()
+        name = (request.form.get("name") or "").strip()
+        price = request.form.get("price") or "0"
+        qty = request.form.get("qty") or "0"
+        unit = request.form.get("unit") or "ชิ้น"
+        record = {
+            "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "user": session.get("username", "ผู้ดูแลระบบ"),
+            "recorder": session.get("recorder", "ผู้ดูแลระบบ"),
+            "code": code,
+            "name": name,
+            "price": price,
+            "qty": qty,
+            "unit": unit
+        }
+        STOCK_LOGS.append(record)
+        status_msg = f"บันทึกการนับสต็อก {name} จำนวน {qty} {unit} เรียบร้อยแล้ว ใช้สำหรับบันทึกการนับเท่านั้น ไม่ปรับข้อมูลสต็อกหลัก"
+
+    options_html = "".join(
+        [f'<option value="{c}">{c} - {p["name"]}</option>' for c, p in PRODUCTS.items()]
+    )
+    logs_html = "".join(
+        [f'<li>{r["time"]} | ผู้ใช้ {r["user"]} | ผู้นับสต็อก {r["recorder"]} | รหัส {r["code"]} | {r["name"]} | ราคา {r["price"]} | จำนวน {r["qty"]} {r["unit"]}</li>' for r in reversed(STOCK_LOGS)]
+    )
+
+    html = f\"\"\"
+    <section class="card">
+      <h2>นับสต็อก</h2>
+      <p>ชื่อผู้ใช้งาน: <strong>{session.get("username", "-")}</strong> | ชื่อผู้บันทึกหรือผู้นับสต็อก: <strong>{session.get("recorder", "-")}</strong></p>
+      <p>ใช้สำหรับกรอกข้อมูลเพื่อบันทึกการนับสต็อกเท่านั้น ไม่สามารถใช้ปรับข้อมูลสต็อกหลักได้</p>
+      {SCANNER_BLOCK}
+      <form method="post" id="stockForm">
+        <label>สแกนหรือเลือกรหัสสินค้า บาร์โค้ด</label>
+        <select id="barcodePicker" onchange="lookupBarcode(this.value)">
+          <option value="">เลือกรหัสสินค้าเพื่อสแกน</option>
+          {options_html}
+        </select>
+        <label>รหัสสินค้า บาร์โค้ด</label>
+        <input id="codeInput" name="code" type="text" required onchange="lookupBarcode(this.value)" />
+        <label>ชื่อสินค้า</label>
+        <input id="nameInput" name="name" type="text" required />
+        <label>ราคาต่อหน่วย</label>
+        <input id="priceInput" name="price" type="number" step="any" required />
+        <label>จำนวนสินค้า ต่อชิ้นหรือแพ็ค</label>
+        <input id="qtyInput" name="qty" type="number" step="any" required />
+        <label>หน่วย</label>
+        <select id="unitInput" name="unit">
+          <option value="ชิ้น">ชิ้น</option>
+          <option value="แพ็ค">แพ็ค</option>
+          <option value="กล่อง">กล่อง</option>
+          <option value="ขวด">ขวด</option>
+          <option value="ลัง">ลัง</option>
+        </select>
+        <button type="submit">บันทึกการนับสต็อก</button>
+      </form>
+      <p class="msg-ok">{status_msg}</p>
+      <h3>รายการนับสต็อกที่บันทึกแล้ว</h3>
+      <ul>{logs_html}</ul>
+    </section>
+    <script>
+      async function lookupBarcode(code) {{
+        if (!code) return;
+        const res = await fetch('/api/product/' + encodeURIComponent(code.trim()));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.found) {{
+          document.getElementById('codeInput').value = data.product.code;
+          document.getElementById('nameInput').value = data.product.name;
+          document.getElementById('priceInput').value = data.product.price;
+          document.getElementById('qtyInput').value = data.product.qty;
+          document.getElementById('unitInput').value = data.product.unit || 'ชิ้น';
+        }}
+      }}
+    </script>
+    \"\"\"
+    return render_page(html)
+
+
+@app.route("/pricing", methods=["GET", "POST"])
+def pricing():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        action = request.form.get("action", "add")
+        code = (request.form.get("code") or "").strip()
+        if action == "delete" and code in PRODUCTS:
+            del PRODUCTS[code]
+        elif action == "add" and code:
+            PRODUCTS[code] = {
+                "code": code,
+                "name": (request.form.get("name") or "").strip(),
+                "price": float(request.form.get("price") or 0),
+                "qty": int(float(request.form.get("qty") or 0)),
+                "unit": request.form.get("unit") or "ชิ้น",
+                "detail": (request.form.get("detail") or "").strip()
+            }
+
+    rows_html = ""
+    for c, p in PRODUCTS.items():
+        rows_html += f\"\"\"
+        <div style="padding:10px 0; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <div>รหัส {p["code"]} | ชื่อ {p["name"]} | ราคา {p["price"]} บาท | จำนวน {p["qty"]} {p["unit"]} | รายละเอียด {p["detail"]}</div>
+          <form method="post" style="margin:0;">
+            <input type="hidden" name="action" value="delete" />
+            <input type="hidden" name="code" value="{p["code"]}" />
+            <button type="submit" class="secondary">ลบสินค้า</button>
+          </form>
+        </div>
+        \"\"\"
+
+    html = f\"\"\"
+    <section class="card">
+      <h2>ราคาและจำนวน</h2>
+      {SCANNER_BLOCK}
+      <form method="post">
+        <input type="hidden" name="action" value="add" />
+        <label>ชื่อสินค้า</label>
+        <input id="pricingNameInput" name="name" type="text" required />
+        <label>รหัสสินค้า</label>
+        <input id="pricingCodeInput" name="code" type="text" required />
+        <label>ราคา</label>
+        <input id="pricingPriceInput" name="price" type="number" step="any" required />
+        <label>จำนวน</label>
+        <input id="pricingQtyInput" name="qty" type="number" step="any" required />
+        <label>หน่วย</label>
+        <select id="pricingUnitInput" name="unit">
+          <option value="ชิ้น">ชิ้น</option>
+          <option value="แพ็ค">แพ็ค</option>
+          <option value="กล่อง">กล่อง</option>
+          <option value="ขวด">ขวด</option>
+          <option value="ลัง">ลัง</option>
+        </select>
+        <label>รายละเอียดสินค้า</label>
+        <textarea name="detail" rows="2"></textarea>
+        <button type="submit">เพิ่มสินค้า</button>
+      </form>
+      <div style="margin-top:16px;">{rows_html}</div>
+    </section>
+    <script>
+      async function lookupBarcode(code) {{
+        if (!code) return;
+        const res = await fetch('/api/product/' + encodeURIComponent(code.trim()));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.found) {{
+          document.getElementById('pricingCodeInput').value = data.product.code;
+          document.getElementById('pricingNameInput').value = data.product.name;
+          document.getElementById('pricingPriceInput').value = data.product.price;
+          document.getElementById('pricingQtyInput').value = data.product.qty;
+          document.getElementById('pricingUnitInput').value = data.product.unit || 'ชิ้น';
+        }}
+      }}
+    </script>
+    \"\"\"
+    return render_page(html)
+
+
+@app.route("/export", methods=["GET", "POST"])
+def export_page():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    current_user = session.get("username", "ผู้ดูแลระบบ")
+    auto_print = False
+
+    if request.method == "POST":
+        export_type = request.form.get("export_type", "PDF")
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        if export_type == "Print":
+            backup_file = f"print_log_{current_user}_{ts}.json"
+            payload = {
+                "watermark": "ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
+                "printed_by": current_user,
+                "printed_at": ts,
+                "products": list(PRODUCTS.values()),
+                "stock_logs": STOCK_LOGS
+            }
+            with open(os.path.join(BACKUP_DIR, backup_file), "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            EXPORT_AUDITS.append({
+                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user": current_user,
+                "type": "Print",
+                "backup": backup_file
+            })
+            auto_print = True
+        else:
+            export_file, full_path, mimetype = generate_export_file(export_type, current_user, ts)
+            EXPORT_AUDITS.append({
+                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "user": current_user,
+                "type": export_type,
+                "backup": export_file
+            })
+            return send_file(full_path, mimetype=mimetype, as_attachment=True, download_name=export_file)
+
+    visible_audits = [a for a in EXPORT_AUDITS if can_access_audit(a, current_user)]
+    audit_html = "".join(
+        [f'<li>{a["time"]} | ผู้ใช้ {a["user"]} | ประเภท {a["type"]} | ไฟล์ส่งออก <a href="/backups/{a["backup"]}">{a["backup"]}</a></li>' for a in reversed(visible_audits)]
+    )
+    scope_text = "ผู้ดูแลระบบ: เข้าถึงไฟล์สำรองของทุกคนได้" if is_admin_user(current_user) else f"ผู้ใช้ {current_user}: เข้าถึงได้เฉพาะไฟล์สำรองของตัวเอง"
+
+    prod_rows_html = "".join(
+        [f"<tr><td>{p['code']}</td><td>{p['name']}</td><td>{p['price']}</td><td>{p['qty']}</td><td>{p['unit']}</td><td>{p['detail']}</td></tr>" for p in PRODUCTS.values()]
+    )
+    log_rows_html = "".join(
+        [f"<tr><td>{r['time']}</td><td>{r['user']}</td><td>{r['recorder']}</td><td>{r['code']}</td><td>{r['name']}</td><td>{r['price']}</td><td>{r['qty']} {r['unit']}</td></tr>" for r in reversed(STOCK_LOGS)]
+    )
+    print_script = "<script>window.addEventListener('load', () => setTimeout(() => window.print(), 150));</script>" if auto_print else ""
+
+    html = f\"\"\"
+    <section class="card">
+      <h2>ส่งออกและประวัติผู้ดูแลระบบ</h2>
+      <p>{scope_text}</p>
+      <form method="post" class="no-print" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
+        <button type="submit" name="export_type" value="PDF">ส่งออก PDF</button>
+        <button type="submit" name="export_type" value="Word">ส่งออก Word</button>
+        <button type="submit" name="export_type" value="Excel">ส่งออก Excel</button>
+        <button type="submit" name="export_type" value="Print">พิมพ์</button>
+      </form>
+      <div class="watermark-box">
+        <div class="watermark-text">ระบบนับสต็อก พัฒนาโดย เอ็มเจ</div>
+        <div>เนื้อหารายงานสต็อกและสำรองข้อมูลของระบบ</div>
+        <table>
+          <thead>
+            <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>ราคา</th><th>จำนวน</th><th>หน่วย</th><th>รายละเอียด</th></tr>
+          </thead>
+          <tbody>{prod_rows_html}</tbody>
+        </table>
+        <h4 style="margin-top:14px;">รายละเอียดการนับสต็อก</h4>
+        <table>
+          <thead>
+            <tr><th>เวลา</th><th>ผู้ใช้</th><th>ผู้นับสต็อก</th><th>รหัส</th><th>ชื่อสินค้า</th><th>ราคา</th><th>จำนวน</th></tr>
+          </thead>
+          <tbody>{log_rows_html}</tbody>
+        </table>
+      </div>
+      <h3 class="no-print" style="margin-top:18px;">ประวัติการส่งออกและพิมพ์</h3>
+      <ul class="no-print">{audit_html}</ul>
+    </section>
+    {print_script}
+    \"\"\"
+    return render_page(html)
+
+
+@app.route("/backups/<filename>")
+def download_backup(filename):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+    current_user = session.get("username", "ผู้ดูแลระบบ")
+    matched = next((a for a in EXPORT_AUDITS if a.get("backup") == filename), None)
+    if matched and not can_access_audit(matched, current_user):
+        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
+    if not is_admin_user(current_user) and f"_{current_user}_" not in filename:
+        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
+    return send_from_directory(BACKUP_DIR, filename, as_attachment=True)
+
+
+@app.route("/review", methods=["GET", "POST"])
+def review_page():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    share_msg = ""
+    if request.method == "POST":
+        action = request.form.get("action", "submit")
+        if action == "share":
+            share_msg = "คัดลอกข้อความประชาสัมพันธ์ระบบนับสต็อก ซอฟต์แวร์ โดย เอ็มเจ สำหรับแชร์ไปยังช่องทางอื่นแล้ว"
+        else:
+            stars = int(request.form.get("stars") or 5)
+            comment = (request.form.get("comment") or "").strip()
+            if comment:
+                REVIEWS.append({
+                    "user": session.get("username", "ผู้ดูแลระบบ"),
+                    "stars": stars,
+                    "comment": comment
+                })
+
+    reviews_html = "".join(
+        [f'<li>คะแนน {r["stars"]} ดาว โดย {r["user"]}: {r["comment"]}</li>' for r in reversed(REVIEWS)]
+    )
+
+    html = f\"\"\"
+    <section class="card">
+      <h2>รีวิว</h2>
+      <form method="post">
+        <label>ให้คะแนน 1 ถึง 5 ดาว</label>
+        <select name="stars">
+          <option value="5">5 ดาว</option>
+          <option value="4">4 ดาว</option>
+          <option value="3">3 ดาว</option>
+          <option value="2">2 ดาว</option>
+          <option value="1">1 ดาว</option>
+        </select>
+        <label>ข้อความรีวิว</label>
+        <textarea name="comment" rows="3" placeholder="เขียนรีวิวการใช้งานระบบ"></textarea>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button type="submit" name="action" value="submit">ส่งรีวิว</button>
+          <button type="submit" name="action" value="share" class="secondary">แชร์ไปยังช่องทางอื่น</button>
+        </div>
+      </form>
+      <p class="msg-ok">{share_msg}</p>
+      <ul style="margin-top:14px;">{reviews_html}</ul>
+    </section>
+    \"\"\"
+    return render_page(html)
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
+"""
+
+with open("app-v6.py", "w", encoding="utf-8") as f:
+    f.write(app_py)
+print("Created app-v6.py successfully")
