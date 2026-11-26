@@ -1,4 +1,4 @@
-app_py = """import os
+import os
 import io
 import csv
 import json
@@ -25,7 +25,7 @@ REVIEWS = [
     {"user": "สมชาย", "stars": 5, "comment": "ใช้งานง่าย สแกนสินค้าแล้วข้อมูลขึ้นครบถ้วน"}
 ]
 
-BASE_TEMPLATE = \"\"\"<!DOCTYPE html>
+BASE_TEMPLATE = """<!DOCTYPE html>
 <html lang="th">
 <head>
   <meta charset="UTF-8" />
@@ -79,10 +79,10 @@ BASE_TEMPLATE = \"\"\"<!DOCTYPE html>
 
   <footer>ซอฟต์แวร์ โดย เอ็มเจ</footer>
 </body>
-</html>\"\"\"
+</html>"""
 
 
-SCANNER_BLOCK = \"\"\"
+SCANNER_BLOCK = """
 <div style="border:1px solid #d9e0e8; border-radius:8px; padding:14px; margin-bottom:14px; background:#f8fafc;">
   <div>สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติด้วยกล้องและแฟลช</div>
   <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
@@ -181,7 +181,7 @@ SCANNER_BLOCK = \"\"\"
     document.getElementById('cameraStatus').textContent = 'ปิดกล้องแล้ว';
   }
 </script>
-\"\"\"
+"""
 
 
 def render_page(body_html):
@@ -199,7 +199,7 @@ def can_access_audit(audit_item, current_user):
 
 
 def _escape_pdf_text(text):
-    return text.replace("\\\\", "\\\\\\\\").replace("(", "\\\\(").replace(")", "\\\\)")
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 
 def build_simple_pdf_bytes(lines):
@@ -211,35 +211,35 @@ def build_simple_pdf_bytes(lines):
         else:
             stream_cmds.append(f"T* ({line}) Tj")
     stream_cmds.append("ET")
-    stream_data = "\\n".join(stream_cmds).encode("latin-1", errors="replace")
+    stream_data = "\n".join(stream_cmds).encode("latin-1", errors="replace")
 
     objs = []
-    objs.append(b"1 0 obj\\n<< /Type /Catalog /Pages 2 0 R >>\\nendobj\\n")
-    objs.append(b"2 0 obj\\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\\nendobj\\n")
+    objs.append(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
+    objs.append(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
     objs.append(
-        b"3 0 obj\\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\\nendobj\\n"
+        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n"
     )
-    objs.append(b"4 0 obj\\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\\nendobj\\n")
+    objs.append(b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
     objs.append(
-        f"5 0 obj\\n<< /Length {len(stream_data)} >>\\nstream\\n".encode("ascii")
+        f"5 0 obj\n<< /Length {len(stream_data)} >>\nstream\n".encode("ascii")
         + stream_data
-        + b"\\nendstream\\nendobj\\n"
+        + b"\nendstream\nendobj\n"
     )
 
-    pdf = bytearray(b"%PDF-1.4\\n")
+    pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for obj in objs:
         offsets.append(len(pdf))
         pdf.extend(obj)
 
     xref_pos = len(pdf)
-    pdf.extend(f"xref\\n0 {len(offsets)}\\n".encode("ascii"))
-    pdf.extend(b"0000000000 65535 f \\n")
+    pdf.extend(f"xref\n0 {len(offsets)}\n".encode("ascii"))
+    pdf.extend(b"0000000000 65535 f \n")
     for off in offsets[1:]:
-        pdf.extend(f"{off:010d} 00000 n \\n".encode("ascii"))
+        pdf.extend(f"{off:010d} 00000 n \n".encode("ascii"))
     pdf.extend(
-        f"trailer\\n<< /Size {len(offsets)} /Root 1 0 R >>\\nstartxref\\n{xref_pos}\\n%%EOF\\n".encode("ascii")
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref_pos}\n%%EOF\n".encode("ascii")
     )
     return bytes(pdf)
 
@@ -255,7 +255,7 @@ def build_word_docx_bytes(lines):
         )
 
     paragraphs = "".join(
-        [f"<w:p><w:r><w:t xml:space=\\"preserve\\">{xml_esc(line)}</w:t></w:r></w:p>" for line in lines]
+        [f"<w:p><w:r><w:t xml:space=\"preserve\">{xml_esc(line)}</w:t></w:r></w:p>" for line in lines]
     )
     document_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -297,7 +297,7 @@ def build_excel_csv_bytes():
     writer.writerow(["Time", "User", "Recorder", "Code", "Name", "Price", "Qty", "Unit"])
     for r in STOCK_LOGS:
         writer.writerow([r["time"], r["user"], r["recorder"], r["code"], r["name"], r["price"], r["qty"], r["unit"]])
-    return ("\\ufeff" + buf.getvalue()).encode("utf-8")
+    return ("\ufeff" + buf.getvalue()).encode("utf-8")
 
 
 def generate_export_file(export_type, current_user, ts):
@@ -341,7 +341,6 @@ def login():
     if request.method == "POST":
         action = request.form.get("action", "login")
         username = (request.form.get("username") or "").strip() or "ผู้ใช้งาน"
-        recorder = (request.form.get("recorder") or "").strip() or username
         consent = request.form.get("consent")
 
         if not consent:
@@ -349,7 +348,7 @@ def login():
         elif action == "google":
             session["logged_in"] = True
             session["username"] = "บัญชีผู้ใช้กูเกิล"
-            session["recorder"] = recorder
+            session.setdefault("recorder", "ผู้ใช้งาน")
             return redirect(url_for("stock"))
         elif action == "register":
             info = "สร้างบัญชีใหม่เรียบร้อยแล้ว กรุณากดปุ่มเข้าสู่ระบบ"
@@ -358,17 +357,15 @@ def login():
         else:
             session["logged_in"] = True
             session["username"] = username
-            session["recorder"] = recorder
+            session.setdefault("recorder", username)
             return redirect(url_for("stock"))
 
-    html = f\"\"\"
+    html = f"""
     <section class="card">
       <h2>เข้าสู่ระบบ</h2>
       <form method="post">
         <label>ชื่อผู้ใช้งาน</label>
         <input name="username" type="text" placeholder="ไม่บังคับกรอก" />
-        <label>ชื่อผู้บันทึกหรือผู้นับสต็อก</label>
-        <input name="recorder" type="text" placeholder="ไม่บังคับกรอก" />
         <label>รหัสผ่าน</label>
         <input name="password" type="password" placeholder="ไม่บังคับกรอก" />
         <label>
@@ -385,7 +382,7 @@ def login():
       <p class="msg-err">{error}</p>
       <p class="msg-ok">{info}</p>
     </section>
-    \"\"\"
+    """
     return render_page(html)
 
 
@@ -410,6 +407,11 @@ def stock():
 
     status_msg = ""
     if request.method == "POST":
+        recorder_input = (request.form.get("recorder") or "").strip()
+        if recorder_input:
+            session["recorder"] = recorder_input
+        recorder = session.get("recorder") or session.get("username", "ผู้ใช้งาน")
+
         code = (request.form.get("code") or "").strip()
         name = (request.form.get("name") or "").strip()
         price = request.form.get("price") or "0"
@@ -417,8 +419,8 @@ def stock():
         unit = request.form.get("unit") or "ชิ้น"
         record = {
             "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user": session.get("username", "ผู้ดูแลระบบ"),
-            "recorder": session.get("recorder", "ผู้ดูแลระบบ"),
+            "user": session.get("username", "ผู้ใช้งาน"),
+            "recorder": recorder,
             "code": code,
             "name": name,
             "price": price,
@@ -426,22 +428,25 @@ def stock():
             "unit": unit
         }
         STOCK_LOGS.append(record)
-        status_msg = f"บันทึกการนับสต็อก {name} จำนวน {qty} {unit} เรียบร้อยแล้ว ใช้สำหรับบันทึกการนับเท่านั้น ไม่ปรับข้อมูลสต็อกหลัก"
+        status_msg = f"บันทึกการนับสต็อก {name} จำนวน {qty} {unit} โดย {recorder} เรียบร้อยแล้ว ใช้สำหรับบันทึกการนับเท่านั้น ไม่ปรับข้อมูลสต็อกหลัก"
 
+    current_recorder = session.get("recorder", "")
     options_html = "".join(
         [f'<option value="{c}">{c} - {p["name"]}</option>' for c, p in PRODUCTS.items()]
     )
     logs_html = "".join(
-        [f'<li>{r["time"]} | ผู้ใช้ {r["user"]} | ผู้นับสต็อก {r["recorder"]} | รหัส {r["code"]} | {r["name"]} | ราคา {r["price"]} | จำนวน {r["qty"]} {r["unit"]}</li>' for r in reversed(STOCK_LOGS)]
+        [f'<li>{r["time"]} | ผู้ใช้ {r["user"]} | ผู้บันทึกหรือผู้นับสต็อก {r["recorder"]} | รหัส {r["code"]} | {r["name"]} | ราคา {r["price"]} | จำนวน {r["qty"]} {r["unit"]}</li>' for r in reversed(STOCK_LOGS)]
     )
 
-    html = f\"\"\"
+    html = f"""
     <section class="card">
       <h2>นับสต็อก</h2>
-      <p>ชื่อผู้ใช้งาน: <strong>{session.get("username", "-")}</strong> | ชื่อผู้บันทึกหรือผู้นับสต็อก: <strong>{session.get("recorder", "-")}</strong></p>
+      <p>ชื่อผู้ใช้งาน: <strong>{session.get("username", "-")}</strong> | ชื่อผู้บันทึกหรือผู้นับสต็อก: <strong>{current_recorder or "-"}</strong></p>
       <p>ใช้สำหรับกรอกข้อมูลเพื่อบันทึกการนับสต็อกเท่านั้น ไม่สามารถใช้ปรับข้อมูลสต็อกหลักได้</p>
       {SCANNER_BLOCK}
       <form method="post" id="stockForm">
+        <label>ชื่อผู้บันทึกหรือผู้นับสต็อก</label>
+        <input id="recorderInput" name="recorder" type="text" value="{current_recorder}" placeholder="กรอกชื่อผู้บันทึกหรือผู้นับสต็อก" required />
         <label>สแกนหรือเลือกรหัสสินค้า บาร์โค้ด</label>
         <select id="barcodePicker" onchange="lookupBarcode(this.value)">
           <option value="">เลือกรหัสสินค้าเพื่อสแกน</option>
@@ -484,7 +489,7 @@ def stock():
         }}
       }}
     </script>
-    \"\"\"
+    """
     return render_page(html)
 
 
@@ -510,7 +515,7 @@ def pricing():
 
     rows_html = ""
     for c, p in PRODUCTS.items():
-        rows_html += f\"\"\"
+        rows_html += f"""
         <div style="padding:10px 0; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
           <div>รหัส {p["code"]} | ชื่อ {p["name"]} | ราคา {p["price"]} บาท | จำนวน {p["qty"]} {p["unit"]} | รายละเอียด {p["detail"]}</div>
           <form method="post" style="margin:0;">
@@ -519,9 +524,9 @@ def pricing():
             <button type="submit" class="secondary">ลบสินค้า</button>
           </form>
         </div>
-        \"\"\"
+        """
 
-    html = f\"\"\"
+    html = f"""
     <section class="card">
       <h2>ราคาและจำนวน</h2>
       {SCANNER_BLOCK}
@@ -564,7 +569,7 @@ def pricing():
         }}
       }}
     </script>
-    \"\"\"
+    """
     return render_page(html)
 
 
@@ -622,7 +627,7 @@ def export_page():
     )
     print_script = "<script>window.addEventListener('load', () => setTimeout(() => window.print(), 150));</script>" if auto_print else ""
 
-    html = f\"\"\"
+    html = f"""
     <section class="card">
       <h2>ส่งออกและประวัติผู้ดูแลระบบ</h2>
       <p>{scope_text}</p>
@@ -653,7 +658,7 @@ def export_page():
       <ul class="no-print">{audit_html}</ul>
     </section>
     {print_script}
-    \"\"\"
+    """
     return render_page(html)
 
 
@@ -694,7 +699,7 @@ def review_page():
         [f'<li>คะแนน {r["stars"]} ดาว โดย {r["user"]}: {r["comment"]}</li>' for r in reversed(REVIEWS)]
     )
 
-    html = f\"\"\"
+    html = f"""
     <section class="card">
       <h2>รีวิว</h2>
       <form method="post">
@@ -716,15 +721,10 @@ def review_page():
       <p class="msg-ok">{share_msg}</p>
       <ul style="margin-top:14px;">{reviews_html}</ul>
     </section>
-    \"\"\"
+    """
     return render_page(html)
 
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-"""
-
-with open("app-v6.py", "w", encoding="utf-8") as f:
-    f.write(app_py)
-print("Created app-v6.py successfully")
