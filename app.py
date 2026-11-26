@@ -2,7 +2,6 @@ import os
 import io
 import csv
 import datetime
-import zipfile
 from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, jsonify
 
@@ -58,15 +57,16 @@ BASE_TEMPLATE = """<!DOCTYPE html>
     input, select, textarea { width: 100%; padding: 9px 12px; margin: 4px 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: #ffffff; }
     .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    .scanner-box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); }
-    .scanner-header { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #0f172a; }
-    .scanner-actions { display: grid; grid-template-columns: 1.35fr 1fr 0.85fr; gap: 8px; margin-top: 8px; }
-    .btn-cam { background: #0f172a; color: #ffffff; border: 1px solid #0f172a; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.12); }
-    .btn-cam:hover { background: #1e293b; border-color: #1e293b; color: #ffffff; }
-    .btn-flash { background: #ffffff; color: #b45309; border: 1px solid #f59e0b; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; }
-    .btn-flash:hover, .btn-flash.active { background: #f59e0b; color: #ffffff; border-color: #d97706; }
-    .btn-stop { background: #ffffff; color: #dc2626; border: 1px solid #fca5a5; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; }
-    .btn-stop:hover { background: #dc2626; color: #ffffff; border-color: #dc2626; }
+    .scanner-box { border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px; margin-bottom: 12px; background: #f8fafc; }
+    .scanner-header { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #0f172a; }
+    .scanner-actions { display: grid; grid-template-columns: 1.4fr 1fr 0.85fr; gap: 8px; margin-top: 10px; }
+    .btn-cam, .btn-flash, .btn-stop { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 10px; border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: all 0.15s ease; }
+    .btn-cam { background: #0f172a; color: #ffffff; border: 1px solid #0f172a; }
+    .btn-cam:hover { background: #1e293b; color: #ffffff; }
+    .btn-flash { background: #fffbeb; color: #b45309; border: 1px solid #f59e0b; }
+    .btn-flash:hover, .btn-flash.active { background: #f59e0b; color: #ffffff; }
+    .btn-stop { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+    .btn-stop:hover { background: #dc2626; color: #ffffff; }
     .btn-icon { width: 15px; height: 15px; flex-shrink: 0; }
     .msg-err { color: #b91c1c; margin: 6px 0 0; font-weight: 600; font-size: 13px; }
     .msg-ok { color: #15803d; margin: 6px 0 0; font-weight: 600; font-size: 13px; }
@@ -98,8 +98,8 @@ BASE_TEMPLATE = """<!DOCTYPE html>
       .hint-mobile-hide { display: none; }
       .scanner-box { padding: 7px; margin-bottom: 6px; }
       .scanner-header { font-size: 11.5px; }
-      .scanner-actions { display: grid; grid-template-columns: 1.35fr 1fr 0.85fr; gap: 4px; margin-top: 5px; }
-      .scanner-actions button { padding: 6px 4px; font-size: 11px; white-space: nowrap; border-radius: 7px; }
+      .scanner-actions { display: grid; grid-template-columns: 1.4fr 1fr 0.85fr; gap: 4px; margin-top: 5px; }
+      .scanner-actions button { padding: 7px 4px; font-size: 11px; white-space: nowrap; border-radius: 8px; }
       .btn-icon { width: 13px; height: 13px; }
       label { font-size: 11px; margin-bottom: 1px; }
       input, select, textarea { padding: 5px 7px; margin: 2px 0 5px; font-size: 12.5px; }
@@ -124,7 +124,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
   <div class="utility-bar">
     <div class="utility-inner">
       <div>ระบบนับสต็อกและรายงานข้อมูลสินค้า</div>
-      <div>27 พฤศจิกายน พ.ศ. 2569 04:41 น.</div>
+      <div>27 พฤศจิกายน พ.ศ. 2569 05:11 น.</div>
     </div>
   </div>
 
@@ -167,20 +167,35 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 SCANNER_BLOCK = """
 <div class="scanner-box">
   <div class="scanner-header">
-    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
+      <path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+      <path d="M21 17v2a2 2 0 0 1-2 2h-2"/>
+      <path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+      <line x1="7" y1="12" x2="17" y2="12"/>
+    </svg>
     <span>สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติ</span>
   </div>
   <div class="scanner-actions">
     <button type="button" class="btn-cam" onclick="startCameraScan()">
-      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+        <circle cx="12" cy="13" r="3"/>
+      </svg>
       <span>เปิดกล้องสแกน</span>
     </button>
     <button type="button" id="flashBtn" class="btn-flash" onclick="toggleFlashlight()">
-      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+      </svg>
       <span id="flashBtnText">เปิดแฟลช</span>
     </button>
     <button type="button" class="btn-stop" onclick="stopCameraScan()">
-      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="15" y1="9" x2="9" y2="15"/>
+        <line x1="9" y1="9" x2="15" y2="15"/>
+      </svg>
       <span>ปิดกล้อง</span>
     </button>
   </div>
@@ -957,4 +972,3 @@ def review_page():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-``` 27 พฤศจิกายน พ.ศ. 2569 04:41 น.
