@@ -348,7 +348,7 @@ def login():
         elif action == "google":
             session["logged_in"] = True
             session["username"] = "บัญชีผู้ใช้กูเกิล"
-            session.setdefault("recorder", "ผู้ใช้งาน")
+            session["recorder"] = ""
             return redirect(url_for("stock"))
         elif action == "register":
             info = "สร้างบัญชีใหม่เรียบร้อยแล้ว กรุณากดปุ่มเข้าสู่ระบบ"
@@ -357,17 +357,17 @@ def login():
         else:
             session["logged_in"] = True
             session["username"] = username
-            session.setdefault("recorder", username)
+            session["recorder"] = ""
             return redirect(url_for("stock"))
 
     html = f"""
     <section class="card">
       <h2>เข้าสู่ระบบ</h2>
-      <form method="post">
+      <form method="post" autocomplete="off">
         <label>ชื่อผู้ใช้งาน</label>
-        <input name="username" type="text" placeholder="ไม่บังคับกรอก" />
+        <input name="username" type="text" value="" autocomplete="off" />
         <label>รหัสผ่าน</label>
-        <input name="password" type="password" placeholder="ไม่บังคับกรอก" />
+        <input name="password" type="password" value="" autocomplete="new-password" />
         <label>
           <input name="consent" type="checkbox" style="width:auto; margin-right:8px;" />
           ฉันยอมรับเงื่อนไขและให้ความยินยอมในการเข้าถึงข้อมูลเพื่อใช้งานระบบ
@@ -444,9 +444,9 @@ def stock():
       <p>ชื่อผู้ใช้งาน: <strong>{session.get("username", "-")}</strong> | ชื่อผู้บันทึกหรือผู้นับสต็อก: <strong>{current_recorder or "-"}</strong></p>
       <p>ใช้สำหรับกรอกข้อมูลเพื่อบันทึกการนับสต็อกเท่านั้น ไม่สามารถใช้ปรับข้อมูลสต็อกหลักได้</p>
       {SCANNER_BLOCK}
-      <form method="post" id="stockForm">
+      <form method="post" id="stockForm" autocomplete="off">
         <label>ชื่อผู้บันทึกหรือผู้นับสต็อก</label>
-        <input id="recorderInput" name="recorder" type="text" value="{current_recorder}" placeholder="กรอกชื่อผู้บันทึกหรือผู้นับสต็อก" required />
+        <input id="recorderInput" name="recorder" type="text" value="{current_recorder}" autocomplete="off" required />
         <label>สแกนหรือเลือกรหัสสินค้า บาร์โค้ด</label>
         <select id="barcodePicker" onchange="lookupBarcode(this.value)">
           <option value="">เลือกรหัสสินค้าเพื่อสแกน</option>
@@ -598,133 +598,4 @@ def export_page():
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             EXPORT_AUDITS.append({
                 "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "user": current_user,
-                "type": "Print",
-                "backup": backup_file
-            })
-            auto_print = True
-        else:
-            export_file, full_path, mimetype = generate_export_file(export_type, current_user, ts)
-            EXPORT_AUDITS.append({
-                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "user": current_user,
-                "type": export_type,
-                "backup": export_file
-            })
-            return send_file(full_path, mimetype=mimetype, as_attachment=True, download_name=export_file)
-
-    visible_audits = [a for a in EXPORT_AUDITS if can_access_audit(a, current_user)]
-    audit_html = "".join(
-        [f'<li>{a["time"]} | ผู้ใช้ {a["user"]} | ประเภท {a["type"]} | ไฟล์ส่งออก <a href="/backups/{a["backup"]}">{a["backup"]}</a></li>' for a in reversed(visible_audits)]
-    )
-    scope_text = "ผู้ดูแลระบบ: เข้าถึงไฟล์สำรองของทุกคนได้" if is_admin_user(current_user) else f"ผู้ใช้ {current_user}: เข้าถึงได้เฉพาะไฟล์สำรองของตัวเอง"
-
-    prod_rows_html = "".join(
-        [f"<tr><td>{p['code']}</td><td>{p['name']}</td><td>{p['price']}</td><td>{p['qty']}</td><td>{p['unit']}</td><td>{p['detail']}</td></tr>" for p in PRODUCTS.values()]
-    )
-    log_rows_html = "".join(
-        [f"<tr><td>{r['time']}</td><td>{r['user']}</td><td>{r['recorder']}</td><td>{r['code']}</td><td>{r['name']}</td><td>{r['price']}</td><td>{r['qty']} {r['unit']}</td></tr>" for r in reversed(STOCK_LOGS)]
-    )
-    print_script = "<script>window.addEventListener('load', () => setTimeout(() => window.print(), 150));</script>" if auto_print else ""
-
-    html = f"""
-    <section class="card">
-      <h2>ส่งออกและประวัติผู้ดูแลระบบ</h2>
-      <p>{scope_text}</p>
-      <form method="post" class="no-print" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-        <button type="submit" name="export_type" value="PDF">ส่งออก PDF</button>
-        <button type="submit" name="export_type" value="Word">ส่งออก Word</button>
-        <button type="submit" name="export_type" value="Excel">ส่งออก Excel</button>
-        <button type="submit" name="export_type" value="Print">พิมพ์</button>
-      </form>
-      <div class="watermark-box">
-        <div class="watermark-text">ระบบนับสต็อก พัฒนาโดย เอ็มเจ</div>
-        <div>เนื้อหารายงานสต็อกและสำรองข้อมูลของระบบ</div>
-        <table>
-          <thead>
-            <tr><th>รหัส</th><th>ชื่อสินค้า</th><th>ราคา</th><th>จำนวน</th><th>หน่วย</th><th>รายละเอียด</th></tr>
-          </thead>
-          <tbody>{prod_rows_html}</tbody>
-        </table>
-        <h4 style="margin-top:14px;">รายละเอียดการนับสต็อก</h4>
-        <table>
-          <thead>
-            <tr><th>เวลา</th><th>ผู้ใช้</th><th>ผู้นับสต็อก</th><th>รหัส</th><th>ชื่อสินค้า</th><th>ราคา</th><th>จำนวน</th></tr>
-          </thead>
-          <tbody>{log_rows_html}</tbody>
-        </table>
-      </div>
-      <h3 class="no-print" style="margin-top:18px;">ประวัติการส่งออกและพิมพ์</h3>
-      <ul class="no-print">{audit_html}</ul>
-    </section>
-    {print_script}
-    """
-    return render_page(html)
-
-
-@app.route("/backups/<filename>")
-def download_backup(filename):
-    if not session.get("logged_in"):
-        return redirect(url_for("login"))
-    current_user = session.get("username", "ผู้ดูแลระบบ")
-    matched = next((a for a in EXPORT_AUDITS if a.get("backup") == filename), None)
-    if matched and not can_access_audit(matched, current_user):
-        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
-    if not is_admin_user(current_user) and f"_{current_user}_" not in filename:
-        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
-    return send_from_directory(BACKUP_DIR, filename, as_attachment=True)
-
-
-@app.route("/review", methods=["GET", "POST"])
-def review_page():
-    if not session.get("logged_in"):
-        return redirect(url_for("login"))
-
-    share_msg = ""
-    if request.method == "POST":
-        action = request.form.get("action", "submit")
-        if action == "share":
-            share_msg = "คัดลอกข้อความประชาสัมพันธ์ระบบนับสต็อก ซอฟต์แวร์ โดย เอ็มเจ สำหรับแชร์ไปยังช่องทางอื่นแล้ว"
-        else:
-            stars = int(request.form.get("stars") or 5)
-            comment = (request.form.get("comment") or "").strip()
-            if comment:
-                REVIEWS.append({
-                    "user": session.get("username", "ผู้ดูแลระบบ"),
-                    "stars": stars,
-                    "comment": comment
-                })
-
-    reviews_html = "".join(
-        [f'<li>คะแนน {r["stars"]} ดาว โดย {r["user"]}: {r["comment"]}</li>' for r in reversed(REVIEWS)]
-    )
-
-    html = f"""
-    <section class="card">
-      <h2>รีวิว</h2>
-      <form method="post">
-        <label>ให้คะแนน 1 ถึง 5 ดาว</label>
-        <select name="stars">
-          <option value="5">5 ดาว</option>
-          <option value="4">4 ดาว</option>
-          <option value="3">3 ดาว</option>
-          <option value="2">2 ดาว</option>
-          <option value="1">1 ดาว</option>
-        </select>
-        <label>ข้อความรีวิว</label>
-        <textarea name="comment" rows="3" placeholder="เขียนรีวิวการใช้งานระบบ"></textarea>
-        <div style="display:flex; gap:10px; flex-wrap:wrap;">
-          <button type="submit" name="action" value="submit">ส่งรีวิว</button>
-          <button type="submit" name="action" value="share" class="secondary">แชร์ไปยังช่องทางอื่น</button>
-        </div>
-      </form>
-      <p class="msg-ok">{share_msg}</p>
-      <ul style="margin-top:14px;">{reviews_html}</ul>
-    </section>
-    """
-    return render_page(html)
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+                "user":
