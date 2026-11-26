@@ -58,8 +58,16 @@ BASE_TEMPLATE = """<!DOCTYPE html>
     input, select, textarea { width: 100%; padding: 9px 12px; margin: 4px 0 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 14px; background: #ffffff; }
     .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    .scanner-box { border: 1px solid #d9e0e8; border-radius: 8px; padding: 12px; margin-bottom: 12px; background: #f8fafc; }
-    .scanner-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .scanner-box { border: 1px solid #cbd5e1; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%); }
+    .scanner-header { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: #0f172a; }
+    .scanner-actions { display: grid; grid-template-columns: 1.35fr 1fr 0.85fr; gap: 8px; margin-top: 8px; }
+    .btn-cam { background: #0f172a; color: #ffffff; border: 1px solid #0f172a; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; box-shadow: 0 2px 4px rgba(15, 23, 42, 0.12); }
+    .btn-cam:hover { background: #1e293b; border-color: #1e293b; color: #ffffff; }
+    .btn-flash { background: #ffffff; color: #b45309; border: 1px solid #f59e0b; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; }
+    .btn-flash:hover, .btn-flash.active { background: #f59e0b; color: #ffffff; border-color: #d97706; }
+    .btn-stop { background: #ffffff; color: #dc2626; border: 1px solid #fca5a5; border-radius: 8px; padding: 8px 10px; font-size: 13px; font-weight: 600; }
+    .btn-stop:hover { background: #dc2626; color: #ffffff; border-color: #dc2626; }
+    .btn-icon { width: 15px; height: 15px; flex-shrink: 0; }
     .msg-err { color: #b91c1c; margin: 6px 0 0; font-weight: 600; font-size: 13px; }
     .msg-ok { color: #15803d; margin: 6px 0 0; font-weight: 600; font-size: 13px; }
     .watermark-box { position: relative; border: 1px solid #cbd5e1; border-radius: 8px; padding: 28px; min-height: 220px; overflow: hidden; background: #ffffff; }
@@ -89,9 +97,10 @@ BASE_TEMPLATE = """<!DOCTYPE html>
       p { margin: 2px 0 5px; font-size: 11.5px; line-height: 1.3; }
       .hint-mobile-hide { display: none; }
       .scanner-box { padding: 7px; margin-bottom: 6px; }
-      .scanner-title { font-size: 11.5px; }
-      .scanner-actions { display: grid; grid-template-columns: 1.4fr 1fr 0.8fr; gap: 4px; margin-top: 5px; }
-      .scanner-actions button { padding: 5px 4px; font-size: 10.5px; white-space: nowrap; }
+      .scanner-header { font-size: 11.5px; }
+      .scanner-actions { display: grid; grid-template-columns: 1.35fr 1fr 0.85fr; gap: 4px; margin-top: 5px; }
+      .scanner-actions button { padding: 6px 4px; font-size: 11px; white-space: nowrap; border-radius: 7px; }
+      .btn-icon { width: 13px; height: 13px; }
       label { font-size: 11px; margin-bottom: 1px; }
       input, select, textarea { padding: 5px 7px; margin: 2px 0 5px; font-size: 12.5px; }
       .form-grid-2 { grid-template-columns: 1fr 1fr; gap: 5px; }
@@ -115,7 +124,7 @@ BASE_TEMPLATE = """<!DOCTYPE html>
   <div class="utility-bar">
     <div class="utility-inner">
       <div>ระบบนับสต็อกและรายงานข้อมูลสินค้า</div>
-      <div>26 พฤศจิกายน พ.ศ. 2569 18:44 น.</div>
+      <div>27 พฤศจิกายน พ.ศ. 2569 04:41 น.</div>
     </div>
   </div>
 
@@ -157,11 +166,23 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 
 SCANNER_BLOCK = """
 <div class="scanner-box">
-  <div class="scanner-title">สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติด้วยกล้องและแฟลช</div>
+  <div class="scanner-header">
+    <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><line x1="7" y1="12" x2="17" y2="12"/></svg>
+    <span>สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติ</span>
+  </div>
   <div class="scanner-actions">
-    <button type="button" onclick="startCameraScan()">เปิดกล้องสแกน</button>
-    <button type="button" class="secondary" onclick="toggleFlashlight()">เปิด/ปิดแฟลช</button>
-    <button type="button" class="secondary" onclick="stopCameraScan()">ปิดกล้อง</button>
+    <button type="button" class="btn-cam" onclick="startCameraScan()">
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+      <span>เปิดกล้องสแกน</span>
+    </button>
+    <button type="button" id="flashBtn" class="btn-flash" onclick="toggleFlashlight()">
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+      <span id="flashBtnText">เปิดแฟลช</span>
+    </button>
+    <button type="button" class="btn-stop" onclick="stopCameraScan()">
+      <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+      <span>ปิดกล้อง</span>
+    </button>
   </div>
   <video id="scanVideo" playsinline autoplay muted style="display:none;"></video>
   <p id="cameraStatus" class="msg-ok"></p>
@@ -232,6 +253,10 @@ SCANNER_BLOCK = """
     try {
       torchOn = !torchOn;
       await activeTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
+      const flashBtn = document.getElementById('flashBtn');
+      const flashText = document.getElementById('flashBtnText');
+      if (flashBtn) flashBtn.classList.toggle('active', torchOn);
+      if (flashText) flashText.textContent = torchOn ? 'ปิดแฟลช' : 'เปิดแฟลช';
       statusEl.textContent = torchOn ? 'เปิดแฟลชแล้ว' : 'ปิดแฟลชแล้ว';
     } catch (err) {
       statusEl.textContent = 'อุปกรณ์หรือเบราว์เซอร์นี้ไม่รองรับการสั่งเปิดปิดแฟลชผ่านเว็บ';
@@ -250,6 +275,11 @@ SCANNER_BLOCK = """
       videoEl.srcObject = null;
       videoEl.style.display = 'none';
     }
+    torchOn = false;
+    const flashBtn = document.getElementById('flashBtn');
+    const flashText = document.getElementById('flashBtnText');
+    if (flashBtn) flashBtn.classList.remove('active');
+    if (flashText) flashText.textContent = 'เปิดแฟลช';
     lastScannedCode = '';
     document.getElementById('cameraStatus').textContent = 'ปิดกล้องแล้ว';
   }
@@ -927,3 +957,4 @@ def review_page():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+``` 27 พฤศจิกายน พ.ศ. 2569 04:41 น.
