@@ -4,6 +4,7 @@ import csv
 import json
 import datetime
 import zipfile
+from PIL import Image, ImageDraw, ImageFont
 from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, send_file, jsonify
 
 app = Flask(__name__)
@@ -196,34 +197,118 @@ def can_access_audit(audit_item, current_user):
     return audit_item.get("user") == current_user
 
 
-def _escape_pdf_text(text):
-    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def _find_thai_font_path():
+    candidates = [
+        "/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf",
+        "/usr/share/fonts/truetype/noto/NotoLoopedThai-Regular.ttf",
+        "/usr/share/fonts/truetype/thai/TlwgTypo.ttf",
+        "/usr/share/fonts/truetype/thai/Loma.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
 
 
-def build_simple_pdf_bytes(lines):
-    escaped_lines = [_escape_pdf_text(str(line)) for line in lines]
-    stream_cmds = ["BT", "/F1 11 Tf", "50 750 Td", "16 TL"]
-    for idx, line in enumerate(escaped_lines[:42]):
-        if idx == 0:
-            stream_cmds.append(f"({line}) Tj")
-        else:
-            stream_cmds.append(f"T* ({line}) Tj")
-    stream_cmds.append("ET")
-    stream_data = "\n".join(stream_cmds).encode("latin-1", errors="replace")
+def build_simple_pdf_bytes(lines, watermark_text="ระบบนับสต็อก พัฒนาโดย เอ็มเจ"):
+    page_w, page_h = 1240, 1754
+    margin_x, margin_y = 70, 75
+    line_h = 34
+    max_lines_per_page = max(1, (page_h - margin_y * 2) // line_h)
+
+    font_path = _find_thai_font_path()
+    if font_path:
+        body_font = ImageFont.truetype(font_path, 22)
+        wm_font = ImageFont.truetype(font_path, 52)
+    else:
+        body_font = ImageFont.load_default()
+        wm_font = ImageFont.load_default()
+
+    dummy_img = Image.new("RGB", (page_w, page_h), "white")
+    dummy_draw = ImageDraw.Draw(dummy_img)
+    max_text_w = page_w - margin_x * 2
+
+    wrapped = []
+    for line in lines:
+        s = str(line)
+        if not s:
+            wrapped.append("")
+            continue
+        cur = ""
+        for ch in s:
+            test = cur + ch
+            bbox = dummy_draw.textbbox((0, 0), test, font=body_font)
+            if (bbox[2] - bbox[0]) <= max_text_w:
+                cur = test
+            else:
+                wrapped.append(cur)
+                cur = ch
+        if cur:
+            wrapped.append(cur)
+
+    pages_lines = [wrapped[i:i + max_lines_per_page] for i in range(0, max(1, len(wrapped)), max_lines_per_page)]
+    jpeg_pages = []
+
+    for p_lines in pages_lines:
+        img = Image.new("RGB", (page_w, page_h), (255, 255, 255))
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        y = margin_y
+        for ln in p_lines:
+            draw.text((margin_x, y), ln, fill=(27, 36, 48, 255), font=body_font)
+            y += line_h
+
+        wm_layer = Image.new("RGBA", (page_w, page_h), (255, 255, 255, 0))
+        wm_draw = ImageDraw.Draw(wm_layer, "RGBA")
+        wm_bbox = wm_draw.textbbox((0, 0), watermark_text, font=wm_font)
+        tw, th = max(1, wm_bbox[2] - wm_bbox[0]), max(1, wm_bbox[3] - wm_bbox[1])
+        wm_patch = Image.new("RGBA", (tw + 40, th + 40), (255, 255, 255, 0))
+        ImageDraw.Draw(wm_patch, "RGBA").text((20, 20), watermark_text, fill=(22, 34, 50, 38), font=wm_font)
+        rotated = wm_patch.rotate(28, expand=True, resample=Image.BICUBIC)
+        rw, rh = rotated.size
+        for gx in range(-100, page_w + rw, rw + 140):
+            for gy in range(-100, page_h + rh, rh + 180):
+                wm_layer.alpha_composite(rotated, (gx, gy))
+
+        img = Image.alpha_composite(img.convert("RGBA"), wm_layer).convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=88)
+        jpeg_pages.append(buf.getvalue())
 
     objs = []
+    page_obj_ids = []
+    next_id = 3
+    page_specs = []
+    for jpg in jpeg_pages:
+        page_id = next_id
+        img_id = next_id + 1
+        cnt_id = next_id + 2
+        next_id += 3
+        page_obj_ids.append(page_id)
+        page_specs.append((page_id, img_id, cnt_id, jpg))
+
     objs.append(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n")
-    objs.append(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n")
-    objs.append(
-        b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-        b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n"
-    )
-    objs.append(b"4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n")
-    objs.append(
-        f"5 0 obj\n<< /Length {len(stream_data)} >>\nstream\n".encode("ascii")
-        + stream_data
-        + b"\nendstream\nendobj\n"
-    )
+    kids_str = " ".join(f"{pid} 0 R" for pid in page_obj_ids)
+    objs.append(f"2 0 obj\n<< /Type /Pages /Kids [{kids_str}] /Count {len(page_obj_ids)} >>\nendobj\n".encode("ascii"))
+
+    for page_id, img_id, cnt_id, jpg in page_specs:
+        content_stream = b"q\n595 0 0 842 0 0 cm\n/Im1 Do\nQ\n"
+        objs.append(
+            f"{page_id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+            f"/Resources << /XObject << /Im1 {img_id} 0 R >> >> /Contents {cnt_id} 0 R >>\nendobj\n".encode("ascii")
+        )
+        objs.append(
+            f"{img_id} 0 obj\n<< /Type /XObject /Subtype /Image /Width {page_w} /Height {page_h} "
+            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(jpg)} >>\nstream\n".encode("ascii")
+            + jpg
+            + b"\nendstream\nendobj\n"
+        )
+        objs.append(
+            f"{cnt_id} 0 obj\n<< /Length {len(content_stream)} >>\nstream\n".encode("ascii")
+            + content_stream
+            + b"\nendstream\nendobj\n"
+        )
 
     pdf = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -300,7 +385,8 @@ def build_excel_csv_bytes():
 
 def generate_export_file(export_type, current_user, ts):
     lines = [
-        "MJ Stock Report - ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
+        "ลายน้ำ: ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
+        "รายงานการนับสต็อก - ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
         f"Exported By: {current_user}",
         f"Export Type: {export_type}",
         f"Timestamp: {ts}",
