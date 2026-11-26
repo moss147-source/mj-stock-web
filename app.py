@@ -5,6 +5,7 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "mj-stock-render-secret-key")
+ADMIN_USER = os.environ.get("ADMIN_USER", "mj_admin")
 
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "backups")
 os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -58,10 +59,10 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 
   {% if session.get("logged_in") %}
   <nav>
-    <a class="nav-btn secondary" href="{{ url_for('stock') }}">หน้านับสต็อก</a>
-    <a class="nav-btn secondary" href="{{ url_for('pricing') }}">หน้าราคาและจำนวน</a>
-    <a class="nav-btn secondary" href="{{ url_for('export_page') }}">หน้าส่งออก</a>
-    <a class="nav-btn secondary" href="{{ url_for('review_page') }}">หน้ารีวิว</a>
+    <a class="nav-btn secondary" href="{{ url_for('stock') }}">นับสต็อก</a>
+    <a class="nav-btn secondary" href="{{ url_for('pricing') }}">ราคาและจำนวน</a>
+    <a class="nav-btn secondary" href="{{ url_for('export_page') }}">ส่งออก</a>
+    <a class="nav-btn secondary" href="{{ url_for('review_page') }}">รีวิว</a>
     <a class="nav-btn secondary" href="{{ url_for('logout') }}">ออกจากระบบ</a>
   </nav>
   {% endif %}
@@ -77,9 +78,9 @@ BASE_TEMPLATE = """<!DOCTYPE html>
 
 SCANNER_BLOCK = """
 <div style="border:1px solid #d9e0e8; border-radius:8px; padding:14px; margin-bottom:14px; background:#f8fafc;">
-  <div>สแกนบาร์โค้ดและชื่อสินค้าด้วยกล้องและแฟลช</div>
+  <div>สแกนบาร์โค้ดและชื่อสินค้าอัตโนมัติด้วยกล้องและแฟลช</div>
   <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:10px;">
-    <button type="button" onclick="startCameraScan()">เปิดกล้องและขออนุญาต</button>
+    <button type="button" onclick="startCameraScan()">เปิดกล้องสแกนอัตโนมัติและขออนุญาต</button>
     <button type="button" class="secondary" onclick="toggleFlashlight()">เปิดหรือปิดแฟลช</button>
     <button type="button" class="secondary" onclick="stopCameraScan()">ปิดกล้อง</button>
   </div>
@@ -91,6 +92,17 @@ SCANNER_BLOCK = """
   let activeTrack = null;
   let torchOn = false;
   let scanTimer = null;
+  let lastScannedCode = '';
+
+  function fillScannedProduct(scanned) {
+    const codeField = document.getElementById('codeInput') || document.getElementById('pricingCodeInput');
+    const nameField = document.getElementById('nameInput') || document.getElementById('pricingNameInput');
+    if (codeField) codeField.value = scanned;
+    if (nameField && !nameField.value) nameField.value = 'สินค้า ' + scanned;
+    if (typeof lookupBarcode === 'function') {
+      lookupBarcode(scanned);
+    }
+  }
 
   async function startCameraScan() {
     const statusEl = document.getElementById('cameraStatus');
@@ -103,27 +115,32 @@ SCANNER_BLOCK = """
       activeTrack = stream.getVideoTracks()[0];
       videoEl.srcObject = stream;
       videoEl.style.display = 'block';
-      statusEl.textContent = 'อนุญาตใช้งานกล้องเรียบร้อยแล้ว พร้อมสแกนบาร์โค้ดและชื่อสินค้า';
+      statusEl.textContent = 'อนุญาตใช้งานกล้องและแฟลชเรียบร้อยแล้ว กำลังสแกนบาร์โค้ดอัตโนมัติ';
+
+      if (scanTimer) clearInterval(scanTimer);
 
       if ('BarcodeDetector' in window) {
         const detector = new BarcodeDetector({ formats: ['ean_13', 'ean_8', 'code_128', 'code_39', 'qr_code', 'upc_a', 'upc_e'] });
         scanTimer = setInterval(async () => {
           if (videoEl.readyState === 4) {
-            const codes = await detector.detect(videoEl);
-            if (codes.length > 0 && codes[0].rawValue) {
-              const scanned = codes[0].rawValue.trim();
-              const codeField = document.getElementById('codeInput') || document.getElementById('pricingCodeInput');
-              if (codeField) {
-                codeField.value = scanned;
-                if (typeof lookupBarcode === 'function') lookupBarcode(scanned);
+            try {
+              const codes = await detector.detect(videoEl);
+              if (codes.length > 0 && codes[0].rawValue) {
+                const scanned = codes[0].rawValue.trim();
+                if (scanned && scanned !== lastScannedCode) {
+                  lastScannedCode = scanned;
+                  fillScannedProduct(scanned);
+                  statusEl.textContent = 'สแกนพบรหัสอัตโนมัติ: ' + scanned;
+                }
               }
-              statusEl.textContent = 'สแกนพบรหัส ' + scanned;
-            }
+            } catch (e) {}
           }
-        }, 600);
+        }, 450);
+      } else {
+        statusEl.textContent = 'เปิดกล้องแล้ว เบราว์เซอร์นี้ไม่รองรับ BarcodeDetector อัตโนมัติ สามารถกรอกหรือเลือกรหัสสินค้าได้ทันที';
       }
     } catch (err) {
-      statusEl.textContent = 'ไม่สามารถเข้าถึงกล้องได้ กรุณาตรวจสอบการอนุญาตกล้องในเบราว์เซอร์หรือสแกนผ่านตัวเลือกสินค้า';
+      statusEl.textContent = 'ไม่สามารถเข้าถึงกล้องได้ กรุณาตรวจสอบการอนุญาตกล้องและแฟลชในเบราว์เซอร์';
     }
   }
 
@@ -154,6 +171,7 @@ SCANNER_BLOCK = """
       videoEl.srcObject = null;
       videoEl.style.display = 'none';
     }
+    lastScannedCode = '';
     document.getElementById('cameraStatus').textContent = 'ปิดกล้องแล้ว';
   }
 </script>
@@ -162,6 +180,16 @@ SCANNER_BLOCK = """
 
 def render_page(body_html):
     return render_template_string(BASE_TEMPLATE.replace("{{ body_html | safe }}", body_html))
+
+
+def is_admin_user(username):
+    return (username or "").strip() == ADMIN_USER
+
+
+def can_access_audit(audit_item, current_user):
+    if is_admin_user(current_user):
+        return True
+    return audit_item.get("user") == current_user
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -194,7 +222,7 @@ def login():
 
     html = f"""
     <section class="card">
-      <h2>หน้าเข้าสู่ระบบ</h2>
+      <h2>เข้าสู่ระบบ</h2>
       <form method="post">
         <label>ชื่อผู้ใช้งาน</label>
         <input name="username" type="text" value="mj_admin" required />
@@ -257,7 +285,7 @@ def stock():
             "unit": unit
         }
         STOCK_LOGS.append(record)
-        status_msg = f"บันทึกการนับสต็อก {name} จำนวน {qty} {unit} เรียบร้อยแล้ว หน้านี้ใช้สำหรับบันทึกการนับเท่านั้น ไม่ปรับข้อมูลสต็อกหลัก"
+        status_msg = f"บันทึกการนับสต็อก {name} จำนวน {qty} {unit} เรียบร้อยแล้ว ใช้สำหรับบันทึกการนับเท่านั้น ไม่ปรับข้อมูลสต็อกหลัก"
 
     options_html = "".join(
         [f'<option value="{c}">{c} - {p["name"]}</option>' for c, p in PRODUCTS.items()]
@@ -268,9 +296,9 @@ def stock():
 
     html = f"""
     <section class="card">
-      <h2>หน้านับสต็อก</h2>
+      <h2>นับสต็อก</h2>
       <p>ชื่อผู้ใช้งาน: <strong>{session.get("username", "-")}</strong> | ชื่อผู้บันทึกหรือผู้นับสต็อก: <strong>{session.get("recorder", "-")}</strong></p>
-      <p>หน้านี้ใช้สำหรับกรอกข้อมูลเพื่อบันทึกการนับสต็อกเท่านั้น ไม่สามารถใช้ปรับข้อมูลสต็อกหลักได้</p>
+      <p>ใช้สำหรับกรอกข้อมูลเพื่อบันทึกการนับสต็อกเท่านั้น ไม่สามารถใช้ปรับข้อมูลสต็อกหลักได้</p>
       {SCANNER_BLOCK}
       <form method="post" id="stockForm">
         <label>สแกนหรือเลือกรหัสสินค้า บาร์โค้ด</label>
@@ -354,7 +382,7 @@ def pricing():
 
     html = f"""
     <section class="card">
-      <h2>หน้าราคาและจำนวน</h2>
+      <h2>ราคาและจำนวน</h2>
       {SCANNER_BLOCK}
       <form method="post">
         <input type="hidden" name="action" value="add" />
@@ -363,11 +391,11 @@ def pricing():
         <label>รหัสสินค้า</label>
         <input id="pricingCodeInput" name="code" type="text" required />
         <label>ราคา</label>
-        <input name="price" type="number" step="any" required />
+        <input id="pricingPriceInput" name="price" type="number" step="any" required />
         <label>จำนวน</label>
-        <input name="qty" type="number" step="any" required />
+        <input id="pricingQtyInput" name="qty" type="number" step="any" required />
         <label>หน่วย</label>
-        <select name="unit">
+        <select id="pricingUnitInput" name="unit">
           <option value="ชิ้น">ชิ้น</option>
           <option value="แพ็ค">แพ็ค</option>
           <option value="กล่อง">กล่อง</option>
@@ -380,6 +408,21 @@ def pricing():
       </form>
       <div style="margin-top:16px;">{rows_html}</div>
     </section>
+    <script>
+      async function lookupBarcode(code) {{
+        if (!code) return;
+        const res = await fetch('/api/product/' + encodeURIComponent(code.trim()));
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data.found) {{
+          document.getElementById('pricingCodeInput').value = data.product.code;
+          document.getElementById('pricingNameInput').value = data.product.name;
+          document.getElementById('pricingPriceInput').value = data.product.price;
+          document.getElementById('pricingQtyInput').value = data.product.qty;
+          document.getElementById('pricingUnitInput').value = data.product.unit || 'ชิ้น';
+        }}
+      }}
+    </script>
     """
     return render_page(html)
 
@@ -389,14 +432,15 @@ def export_page():
     if not session.get("logged_in"):
         return redirect(url_for("login"))
 
-    backup_file = ""
+    current_user = session.get("username", "ผู้ดูแลระบบ")
+    err_msg = ""
     if request.method == "POST":
-        export_type = request.form.get("export_type", "พีดีเอฟ")
+        export_type = request.form.get("export_type", "PDF")
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_file = f"backup_{export_type}_{ts}.json"
+        backup_file = f"backup_{current_user}_{export_type}_{ts}.json"
         payload = {
             "watermark": "ระบบนับสต็อก พัฒนาโดย เอ็มเจ",
-            "exported_by": session.get("username", "ผู้ดูแลระบบ"),
+            "exported_by": current_user,
             "export_type": export_type,
             "exported_at": ts,
             "products": list(PRODUCTS.values()),
@@ -407,29 +451,33 @@ def export_page():
 
         EXPORT_AUDITS.append({
             "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "user": session.get("username", "ผู้ดูแลระบบ"),
+            "user": current_user,
             "type": export_type,
             "backup": backup_file
         })
 
+    visible_audits = [a for a in EXPORT_AUDITS if can_access_audit(a, current_user)]
     audit_html = "".join(
-        [f'<li>{a["time"]} | ผู้ใช้ {a["user"]} | ประเภท {a["type"]} | ไฟล์สำรอง <a href="/backups/{a["backup"]}">{a["backup"]}</a></li>' for a in reversed(EXPORT_AUDITS)]
+        [f'<li>{a["time"]} | ผู้ใช้ {a["user"]} | ประเภท {a["type"]} | ไฟล์สำรอง <a href="/backups/{a["backup"]}">{a["backup"]}</a></li>' for a in reversed(visible_audits)]
     )
+    scope_text = "ผู้ดูแลระบบ: เข้าถึงไฟล์สำรองของทุกคนได้" if is_admin_user(current_user) else f"ผู้ใช้ {current_user}: เข้าถึงได้เฉพาะไฟล์สำรองของตัวเอง"
 
     html = f"""
     <section class="card">
-      <h2>หน้าส่งออกและประวัติผู้ดูแลระบบ</h2>
+      <h2>ส่งออกและประวัติผู้ดูแลระบบ</h2>
+      <p>{scope_text}</p>
       <form method="post" class="no-print" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;">
-        <button type="submit" name="export_type" value="พีดีเอฟ">ส่งออก พีดีเอฟ</button>
-        <button type="submit" name="export_type" value="เวิร์ด">ส่งออก เวิร์ด</button>
-        <button type="submit" name="export_type" value="เอ็กเซล">ส่งออก เอ็กเซล</button>
-        <button type="submit" name="export_type" value="พิมพ์" onclick="setTimeout(()=>window.print(), 100)">พิมพ์</button>
+        <button type="submit" name="export_type" value="PDF">ส่งออก PDF</button>
+        <button type="submit" name="export_type" value="Word">ส่งออก Word</button>
+        <button type="submit" name="export_type" value="Excel">ส่งออก Excel</button>
+        <button type="submit" name="export_type" value="Print" onclick="setTimeout(()=>window.print(), 100)">พิมพ์</button>
       </form>
       <div class="watermark-box">
         <div class="watermark-text">ระบบนับสต็อก พัฒนาโดย เอ็มเจ</div>
         <div>เนื้อหารายงานสต็อกและสำรองข้อมูลของระบบ</div>
       </div>
-      <h3 style="margin-top:18px;">ประวัติการส่งออกและพิมพ์ของผู้ดูแลระบบ</h3>
+      <p class="msg-err">{err_msg}</p>
+      <h3 style="margin-top:18px;">ประวัติการส่งออกและพิมพ์</h3>
       <ul>{audit_html}</ul>
     </section>
     """
@@ -440,6 +488,12 @@ def export_page():
 def download_backup(filename):
     if not session.get("logged_in"):
         return redirect(url_for("login"))
+    current_user = session.get("username", "ผู้ดูแลระบบ")
+    matched = next((a for a in EXPORT_AUDITS if a.get("backup") == filename), None)
+    if matched and not can_access_audit(matched, current_user):
+        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
+    if not is_admin_user(current_user) and not filename.startswith(f"backup_{current_user}_"):
+        return "ไม่มีสิทธิ์เข้าถึงไฟล์สำรองของผู้ใช้อื่น", 403
     return send_from_directory(BACKUP_DIR, filename, as_attachment=True)
 
 
@@ -469,7 +523,7 @@ def review_page():
 
     html = f"""
     <section class="card">
-      <h2>หน้ารีวิว</h2>
+      <h2>รีวิว</h2>
       <form method="post">
         <label>ให้คะแนน 1 ถึง 5 ดาว</label>
         <select name="stars">
